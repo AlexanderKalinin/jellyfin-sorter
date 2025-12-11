@@ -1,0 +1,45 @@
+{
+  "base_path": "/mnt/WD",
+
+  "rpc": {
+    "host": "192.168.100.6",
+    "port": 9091,
+    "username": "",
+    "password": "",
+    "transmission_remote": "/usr/bin/transmission-remote"
+  },
+
+  "categories": {
+    "main": {
+      "watch": "torrent/watch/main",
+      "data":  "torrent/data/main",
+      "movies": "media/main/movies",
+      "shows":  "media/main/shows"
+    },
+    "kids": {
+      "watch": "torrent/watch/kids",
+      "data":  "torrent/data/kids",
+      "movies": "media/kids/movies",
+      "shows":  "media/kids/shows"
+    },
+    "adult": {
+      "watch": "torrent/watch/adult",
+      "data":  "torrent/data/adult",
+      "movies": "media/adult/movies",
+      "shows":  "media/adult/movies",
+      "vr":     "media/adult/vr"
+    }
+  },
+
+  "paths": {
+    "log_file": "logs/jellyfin-sorter.log",
+    "kp_cache": "logs/kp_cache.json",
+    "kp_usage": "logs/kp_usage.json"
+    }
+
+
+  "kinopoisk": {
+    "api_key": "c63adf87-8d20-48f7-953c-71abefc3850aА",
+    "api_key2": "1250bea3-fba9-450e-bb1e-fb8bf2d4e065"
+  }
+}
