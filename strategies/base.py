@@ -3,9 +3,10 @@ import logging
 from abc import ABC, abstractmethod
 
 from core.config import CategoryPaths
-from core.scanner import scan_videos, detect_series
+from core.scanner import EPISODE_RE, detect_series, scan_videos
 from core.title_cleaner import clean_title_for_kp, extract_year_from_name
 from core.kinopoisk import (
+    http_binary,
     kp_search,
     kp_is_series,
     build_tvshow_title,
@@ -23,7 +24,7 @@ from core.posters import (
     ensure_season_poster,
     download_episode_thumb,
 )
-from core.scanner import EPISODE_RE
+import core.fs_utils as fs_utils
 
 
 class CategoryStrategy(ABC):
@@ -68,9 +69,122 @@ class DefaultCategoryStrategy(CategoryStrategy):
         return guessed
 
     def handle_series(self, pack_path, kp_code, kp_info, videos):
-        # сюда переносишь твою handle_series_pack, заменяя глобальные пути на self.paths
-        ...
+        pack_name = os.path.basename(pack_path)
+
+        show_title = build_tvshow_title(kp_info, pack_name)
+        dest_root = os.path.join(self.paths.shows, show_title)
+
+        print(f"SERIES DIR: {pack_path} -> {dest_root}")
+        logging.info("SERIES DIR: %s -> %s", pack_path, dest_root)
+
+        ensure_dir(dest_root)
+        write_tvshow_nfo(dest_root, kp_code, kp_info)
+
+        if kp_info:
+            poster_url = kp_info.get("posterUrl") or kp_info.get("posterUrlPreview")
+            if isinstance(poster_url, str):
+                data = http_binary(poster_url)
+                if data:
+                    poster_path = os.path.join(dest_root, "folder.jpg")
+                    if not os.path.exists(poster_path) or fs_utils.DRY_RUN:
+                        if fs_utils.DRY_RUN:
+                            logging.info("DRY-RUN write show poster %s", poster_path)
+                        else:
+                            ensure_dir(os.path.dirname(poster_path))
+                            try:
+                                with open(poster_path, "wb") as f:
+                                    f.write(data)
+                                logging.info("SHOW POSTER: %s <- %s", poster_path, poster_url)
+                            except Exception as e:
+                                logging.warning("SHOW POSTER WRITE ERROR: %s", e)
+
+        videos_sorted = sorted(videos)
+        ep_index = build_episode_index(kp_info)
+        stills: list[str] = []
+        if kp_info:
+            kp_id = kp_info.get("kinopoiskId") or kp_info.get("filmId") or kp_info.get("id")
+            try:
+                kp_id_int = int(kp_id) if kp_id else None
+            except Exception:
+                kp_id_int = None
+            if kp_id_int:
+                stills = kp_fetch_stills(kp_id_int)
+
+        for v in videos_sorted:
+            fname = os.path.basename(v)
+            m = EPISODE_RE.search(fname)
+
+            if m:
+                season = int(m.group(1))
+                episode = int(m.group(2))
+                season_dir = os.path.join(dest_root, f"Season {season:02d}")
+            else:
+                season = 0
+                episode = None
+                season_dir = os.path.join(dest_root, "Specials")
+                logging.info("SERIES SPECIAL: %s -> %s", fname, season_dir)
+                print(f"SERIES SPECIAL: {fname} -> {season_dir}")
+
+            dest_video_path = move_with_subs(v, season_dir)
+            ensure_season_poster(dest_root, season_dir)
+
+            if episode is not None:
+                meta = ep_index.get((season, episode))
+                if not meta:
+                    logging.warning("EP META MISSING: %s S%02dE%02d", show_title, season, episode)
+                    print(f"EP META MISSING: {show_title} S{season:02d}E{episode:02d}")
+                else:
+                    write_episode_nfo(dest_video_path, season, episode, meta)
+                    if stills:
+                        img_url = stills[(episode - 1) % len(stills)]
+                        download_episode_thumb(dest_video_path, img_url)
 
     def handle_movie(self, pack_path, kp_code, kp_info, videos):
-        # сюда переносишь твою handle_movie_pack, заменяя MOVIES_DIR на self.paths.movies
-        ...
+        pack_name = os.path.basename(pack_path)
+        cleaned = clean_title_for_kp(pack_name)
+        movie_base = build_movie_basename(kp_info)
+
+        if movie_base:
+            dest_dir_name = movie_base
+        else:
+            pretty = pack_name
+            if cleaned and "[" in pack_name and "kp" not in pack_name.lower():
+                pretty = cleaned
+            if cleaned and len(cleaned) >= 3 and not any(c.isalpha() for c in pack_name):
+                pretty = cleaned
+            dest_dir_name = clean_title_for_kp(pretty.strip())
+
+        dest_dir = os.path.join(self.paths.movies, dest_dir_name)
+        print(f"MOVIE DIR: {pack_path} -> {dest_dir}")
+        logging.info("MOVIE DIR: %s -> %s", pack_path, dest_dir)
+
+        ensure_dir(dest_dir)
+
+        new_base = movie_base
+
+        for idx, v in enumerate(sorted(videos)):
+            if idx == 0 and new_base:
+                move_with_subs(v, dest_dir, new_basename=new_base)
+            else:
+                move_with_subs(v, dest_dir)
+
+        if new_base:
+            write_movie_nfo(dest_dir, new_base, kp_code, kp_info)
+
+        if kp_info:
+            poster_url = kp_info.get("posterUrl") or kp_info.get("posterUrlPreview")
+            if isinstance(poster_url, str):
+                data = http_binary(poster_url)
+                if data:
+                    poster_path = os.path.join(dest_dir, "folder.jpg")
+                    if not os.path.exists(poster_path) or fs_utils.DRY_RUN:
+                        if fs_utils.DRY_RUN:
+                            logging.info("DRY-RUN write movie poster %s", poster_path)
+                        else:
+                            ensure_dir(os.path.dirname(poster_path))
+                            try:
+                                with open(poster_path, "wb") as f:
+                                    f.write(data)
+                                logging.info("MOVIE POSTER: %s <- %s", poster_path, poster_url)
+                            except Exception as e:
+                                logging.warning("MOVIE POSTER WRITE ERROR: %s", e)

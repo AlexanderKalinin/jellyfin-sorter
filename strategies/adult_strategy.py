@@ -1,13 +1,13 @@
-import os
 import logging
-from .base import DefaultCategoryStrategy
+import os
+
+import core.fs_utils as fs_utils
+from core.fs_utils import ensure_dir, move_with_subs
+from core.kinopoisk import build_movie_basename, http_binary
+from core.nfo_writer import write_movie_nfo
 from core.scanner import scan_videos
-from core.title_cleaner import (
-    clean_title_for_kp,
-    sanitize_fs_name,
-)
-from core.kinopoisk import build_movie_basename
-from core.fs_utils import move_with_subs
+from core.title_cleaner import clean_title_for_kp, sanitize_fs_name
+from .base import DefaultCategoryStrategy
 
 def is_vr_pack(pack_name: str, videos: list[str]) -> bool:
     name = pack_name.lower()
@@ -35,7 +35,9 @@ class AdultStrategy(DefaultCategoryStrategy):
             dest_dir_name = movie_base
         else:
             pretty = pack_name
-            if cleaned:
+            if cleaned and "[" in pack_name and "kp" not in pack_name.lower():
+                pretty = cleaned
+            if cleaned and len(cleaned) >= 3 and not any(c.isalpha() for c in pack_name):
                 pretty = cleaned
             dest_dir_name = sanitize_fs_name(pretty.strip())
 
@@ -43,5 +45,33 @@ class AdultStrategy(DefaultCategoryStrategy):
         logging.info("MOVIE DIR: %s -> %s", pack_path, dest_dir)
         print(f"MOVIE DIR: {pack_path} -> {dest_dir}")
 
-        # перенос файлов (твоя логика из handle_movie_pack)
-        ...
+        ensure_dir(dest_dir)
+
+        new_base = movie_base
+
+        for idx, v in enumerate(sorted(videos)):
+            if idx == 0 and new_base:
+                move_with_subs(v, dest_dir, new_basename=new_base)
+            else:
+                move_with_subs(v, dest_dir)
+
+        if new_base:
+            write_movie_nfo(dest_dir, new_base, kp_code, kp_info)
+
+        if kp_info:
+            poster_url = kp_info.get("posterUrl") or kp_info.get("posterUrlPreview")
+            if isinstance(poster_url, str):
+                data = http_binary(poster_url)
+                if data:
+                    poster_path = os.path.join(dest_dir, "folder.jpg")
+                    if not os.path.exists(poster_path) or fs_utils.DRY_RUN:
+                        if fs_utils.DRY_RUN:
+                            logging.info("DRY-RUN write movie poster %s", poster_path)
+                        else:
+                            ensure_dir(os.path.dirname(poster_path))
+                            try:
+                                with open(poster_path, "wb") as f:
+                                    f.write(data)
+                                logging.info("MOVIE POSTER: %s <- %s", poster_path, poster_url)
+                            except Exception as e:
+                                logging.warning("MOVIE POSTER WRITE ERROR: %s", e)
